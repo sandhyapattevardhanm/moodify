@@ -1,3 +1,7 @@
+import os
+for f in os.listdir():
+    if f.startswith(".cache"):
+        os.remove(f)
 import streamlit as st
 import pandas as pd
 import pickle

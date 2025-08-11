@@ -20,23 +20,20 @@ MASTER_DF = pd.read_csv("data/SingerAndSongs.csv")
 
 # --- Credential Loader ---
 def _get_credentials():
-    """Get Spotify credentials from Streamlit secrets (cloud) or .env (local)."""
-
-    # Detect if running on Streamlit Cloud
-    running_on_cloud = "SPOTIPY_CLIENT_ID" in st.secrets
-
-    if running_on_cloud:
-        # Always use cloud secrets
-        client_id = st.secrets["SPOTIPY_CLIENT_ID"]
-        client_secret = st.secrets["SPOTIPY_CLIENT_SECRET"]
-        redirect_uri = st.secrets["SPOTIPY_REDIRECT_URI"]  # Must be your cloud URL
+    if st.secrets.get("SPOTIPY_CLIENT_ID"):
+        return (
+            st.secrets["SPOTIPY_CLIENT_ID"],
+            st.secrets["SPOTIPY_CLIENT_SECRET"],
+            st.secrets["SPOTIPY_REDIRECT_URI"]
+        )
     else:
-        # Local development
         from dotenv import load_dotenv
         load_dotenv()
-        client_id = os.getenv("SPOTIPY_CLIENT_ID")
-        client_secret = os.getenv("SPOTIPY_CLIENT_SECRET")
-        redirect_uri = os.getenv("SPOTIPY_REDIRECT_URI") or "http://127.0.0.1:8501"
+        return (
+            os.getenv("SPOTIPY_CLIENT_ID"),
+            os.getenv("SPOTIPY_CLIENT_SECRET"),
+            os.getenv("SPOTIPY_REDIRECT_URI")
+        )
 
     # Validate
     if not all([client_id, client_secret, redirect_uri]):
