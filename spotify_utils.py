@@ -5,7 +5,7 @@ import os
 
 # Load credentials from env or hardcode them (not recommended for deployment)
 client_id = "4dcaf9bdb5c84c5397a12a653bb828b5"
-client_secret = "9fd8f33acd7245a697a045138be2017f"
+client_secret = "83d4ec5005b440e5a568513f82ca7480"
 redirect_uri = "http://127.0.0.1:8501"
 
 scope = "playlist-modify-public playlist-modify-private"
