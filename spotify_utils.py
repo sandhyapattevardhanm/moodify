@@ -20,21 +20,28 @@ MASTER_DF = pd.read_csv("data/SingerAndSongs.csv")
 
 # --- Credential Loader ---
 def _get_credentials():
-    """Return (client_id, client_secret, redirect_uri) from secrets or .env."""
+    """Get Spotify credentials based on environment."""
     client_id = None
     client_secret = None
     redirect_uri = None
 
-    # Try Streamlit secrets (Cloud)
-    if st.secrets and "SPOTIPY_CLIENT_ID" in st.secrets:
-        client_id = st.secrets["SPOTIPY_CLIENT_ID"]
-        client_secret = st.secrets["SPOTIPY_CLIENT_SECRET"]
+    # If running on Streamlit Cloud → always use secrets
+    if st.runtime.exists():  # We're in Streamlit runtime
+        client_id = st.secrets.get("SPOTIPY_CLIENT_ID")
+        client_secret = st.secrets.get("SPOTIPY_CLIENT_SECRET")
         redirect_uri = st.secrets.get("SPOTIPY_REDIRECT_URI")
+    else:
+        # Local dev → use .env
+        from dotenv import load_dotenv
+        load_dotenv()
+        client_id = os.getenv("SPOTIPY_CLIENT_ID")
+        client_secret = os.getenv("SPOTIPY_CLIENT_SECRET")
+        redirect_uri = os.getenv("SPOTIPY_REDIRECT_URI")
 
-    # Fallback to .env (local)
-    client_id = client_id or os.getenv("SPOTIPY_CLIENT_ID")
-    client_secret = client_secret or os.getenv("SPOTIPY_CLIENT_SECRET")
-    redirect_uri = st.secrets.get("SPOTIPY_REDIRECT_URI") if st.secrets else os.getenv("SPOTIPY_REDIRECT_URI")
+    if not all([client_id, client_secret, redirect_uri]):
+        st.error("Missing Spotify credentials. Check your secrets or .env file.")
+        st.stop()
+
     return client_id, client_secret, redirect_uri
 
 
