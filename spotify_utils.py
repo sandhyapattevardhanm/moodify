@@ -11,50 +11,64 @@ from dotenv import load_dotenv
 # Load local .env (only if present)
 load_dotenv()
 
-# Required scopes
+# Required scopes for playlist creation
 SCOPE = "playlist-read-private playlist-modify-public playlist-modify-private"
 
-# Helper to read credentials (cloud via st.secrets else .env/local)
+# Load master dataset (precomputed features)
+MASTER_DF = pd.read_csv("data/SingerAndSongs.csv")
+
+
+# --- Credential Loader ---
 def _get_credentials():
+    """Return (client_id, client_secret, redirect_uri) from secrets or .env."""
     client_id = None
     client_secret = None
     redirect_uri = None
 
-    # First try Streamlit secrets (deployed)
+    # Try Streamlit secrets (Cloud)
     if st.secrets and "SPOTIPY_CLIENT_ID" in st.secrets:
         client_id = st.secrets["SPOTIPY_CLIENT_ID"]
         client_secret = st.secrets["SPOTIPY_CLIENT_SECRET"]
         redirect_uri = st.secrets.get("SPOTIPY_REDIRECT_URI")
-    # Fallback to environment (.env) for local dev
+
+    # Fallback to .env (local)
     client_id = client_id or os.getenv("SPOTIPY_CLIENT_ID")
     client_secret = client_secret or os.getenv("SPOTIPY_CLIENT_SECRET")
     redirect_uri = redirect_uri or os.getenv("SPOTIPY_REDIRECT_URI") or "http://127.0.0.1:8501"
 
     return client_id, client_secret, redirect_uri
 
-# Create a unique cache file name for this session (prevents token mix-up)
+
+# --- Cache Path ---
 def _get_cache_path():
+    """Unique cache path per session."""
     if "sp_cache" not in st.session_state:
         st.session_state["sp_cache"] = f".cache-{uuid.uuid4().hex}"
     return st.session_state["sp_cache"]
 
+
+# --- Playlist ID Extractor ---
 def _extract_playlist_id(url: str) -> str:
     match = re.search(r"playlist/([a-zA-Z0-9]+)", url)
     if match:
         return match.group(1)
     raise ValueError("Invalid Spotify playlist URL")
 
-def get_spotify_client():
-    """
-    Returns an *authenticated* spotipy.Spotify instance for the current user.
-    If user hasn't logged in, shows a login link and stops the app.
-    """
 
+# --- Public Client (No Login) ---
+def get_public_client():
+    """Spotipy client without user login, for reading public playlists."""
+    client_id, client_secret, _ = _get_credentials()
+    return spotipy.Spotify(auth_manager=spotipy.oauth2.SpotifyClientCredentials(
+        client_id=client_id,
+        client_secret=client_secret
+    ))
+
+
+# --- Authenticated Client (Login Required) ---
+def get_authenticated_client():
+    """Spotipy client with user login (needed for creating playlists)."""
     client_id, client_secret, redirect_uri = _get_credentials()
-    if not (client_id and client_secret and redirect_uri):
-        st.error("Missing Spotify app credentials. Locally put them in a .env file; on Streamlit Cloud add them to Secrets.")
-        st.stop()
-
     cache_path = _get_cache_path()
 
     sp_oauth = SpotifyOAuth(
@@ -66,56 +80,34 @@ def get_spotify_client():
         show_dialog=True
     )
 
-        # If Spotify redirected back with ?code=... Streamlit will have it in query params
+    # Handle Spotify redirect with ?code=...
     query_params = st.query_params
     if "code" in query_params:
         code = query_params["code"][0] if isinstance(query_params["code"], list) else query_params["code"]
-        # Exchange code for token and cache it
-        try:
-            token_info = sp_oauth.get_access_token(code)
-        except TypeError:
-            token_info = sp_oauth.get_access_token(code, as_dict=True)
-
-        # clear query params so we don't try to exchange again
+        token_info = sp_oauth.get_access_token(code, as_dict=True)
         st.query_params.clear()
         st.session_state["sp_token_info"] = token_info
 
-    # Prefer session_state stored token, else cached token
+    # Get stored or cached token
     token_info = st.session_state.get("sp_token_info") or sp_oauth.get_cached_token()
-
     if not token_info:
         auth_url = sp_oauth.get_authorize_url()
-        st.markdown(f"[🔐 Login to Spotify]({auth_url})")
+        st.markdown(f"[🔐 Login to Spotify to Create Playlist]({auth_url})")
         st.stop()
 
-    access_token = token_info["access_token"] if isinstance(token_info, dict) else token_info
-    sp = spotipy.Spotify(auth=access_token)
+    return spotipy.Spotify(auth=token_info["access_token"])
 
-    # Optional: show logged-in user name (non-blocking)
-    try:
-        user = sp.current_user()
-        st.session_state["spotify_user_display_name"] = user.get("display_name")
-    except Exception:
-        pass
 
-    return sp
-
-# Load master dataset (your precomputed features)
-MASTER_DF = pd.read_csv("data/SingerAndSongs.csv")
-
+# --- Playlist Analysis ---
 def get_playlist_tracks_matched(playlist_url):
-    sp = get_spotify_client()
+    """Return DataFrame of matched songs from a public playlist."""
+    sp = get_public_client()
 
     try:
         playlist_id = _extract_playlist_id(playlist_url)
-    except ValueError as e:
-        st.error(str(e))
-        st.stop()
-
-    try:
         results = sp.playlist_tracks(playlist_id)
     except spotipy.exceptions.SpotifyException:
-        st.error("Unable to access this playlist (private, region-locked, or invalid). Try a public playlist or log in with the owner account.")
+        st.error("Unable to access this playlist. Make sure it's public.")
         st.stop()
 
     matched_rows = []
@@ -123,16 +115,18 @@ def get_playlist_tracks_matched(playlist_url):
         track = item.get("track", {})
         if not track:
             continue
+
         song_name = track.get("name", "").strip().lower()
         artists = track.get("artists", [])
         singer_name = artists[0]["name"].strip().lower() if artists else ""
         uri = track.get("uri", "")
 
-        # Looser matching for robustness (partial, case-insensitive)
         for _, row in MASTER_DF.iterrows():
             row_song = str(row.get("Song name", "")).strip().lower()
             row_singer = str(row.get("Singer", "")).strip().lower()
-            if song_name and singer_name and (song_name in row_song or row_song in song_name) and (singer_name in row_singer or row_singer in singer_name):
+            if song_name and singer_name and \
+               (song_name in row_song or row_song in song_name) and \
+               (singer_name in row_singer or row_singer in singer_name):
                 matched_rows.append({
                     "Song name": row["Song name"],
                     "Singer": row["Singer"],
@@ -145,12 +139,16 @@ def get_playlist_tracks_matched(playlist_url):
 
     return pd.DataFrame(matched_rows)
 
+
+# --- Playlist Creation ---
 def create_mood_playlist(original_url, mood, track_uris):
-    sp = get_spotify_client()
+    """Create playlist in logged-in user's account."""
+    sp = get_authenticated_client()
+
     try:
         user = sp.current_user()
-    except Exception as e:
-        st.error("Failed to fetch current user. Make sure you completed login.")
+    except Exception:
+        st.error("Failed to fetch current user. Please log in again.")
         st.stop()
 
     st.write(f"✅ Logged in as: {user.get('display_name', user.get('id'))}")
@@ -160,6 +158,7 @@ def create_mood_playlist(original_url, mood, track_uris):
     new_playlist_name = f"{original_name} - {mood}"
 
     new_playlist = sp.user_playlist_create(user=user["id"], name=new_playlist_name, public=True)
+
     if track_uris:
         sp.playlist_add_items(new_playlist["id"], track_uris[:100])
         st.success(f"✅ Added {len(track_uris[:100])} songs to **{new_playlist_name}**")
