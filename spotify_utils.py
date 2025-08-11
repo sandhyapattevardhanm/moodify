@@ -34,8 +34,7 @@ def _get_credentials():
     # Fallback to .env (local)
     client_id = client_id or os.getenv("SPOTIPY_CLIENT_ID")
     client_secret = client_secret or os.getenv("SPOTIPY_CLIENT_SECRET")
-    redirect_uri = redirect_uri or os.getenv("SPOTIPY_REDIRECT_URI") or "http://127.0.0.1:8501"
-
+    redirect_uri = st.secrets.get("SPOTIPY_REDIRECT_URI") if st.secrets else os.getenv("SPOTIPY_REDIRECT_URI")
     return client_id, client_secret, redirect_uri
 
 
